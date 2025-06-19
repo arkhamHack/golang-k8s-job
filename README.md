@@ -2,6 +2,8 @@
 
 This is a Go-based HTTP API server that accepts job submissions with priorities, enqueues them in a max-priority queue, and submits them to a Kubernetes cluster with controlled concurrency.
 
+Task 2 Write Up is in the containerd-snapshotters.md file.
+
 ## Features
 
 - Loads kubeconfig file and initializes a Kubernetes client
@@ -10,15 +12,8 @@ This is a Go-based HTTP API server that accepts job submissions with priorities,
 - Controls job submission concurrency via configurable limits
 - Submits each job as a batch/v1.Job to the Kubernetes cluster
 - Provides endpoints for inspecting pending and running jobs
-- Supports CLI-based job submission from JSON/YAML files
-- Supports graceful shutdown to drain in-flight work
 
-## Requirements
 
-- Go 1.18 or later
-- Access to a Kubernetes cluster with a valid kubeconfig file
-  - Works with local clusters (kind, minikube, k3d) or remote clusters
-- For YAML support: `go get sigs.k8s.io/yaml`
 
 ## Build Instructions
 
@@ -56,17 +51,12 @@ kind get kubeconfig > kind-config
 You can submit one or more job definition files directly from the command line as arguments after the flags. Each job file must be followed by its priority:
 
 ```bash
-# Submit a single job with priority 10
-./k8s-priority-queue job1.json 10
 
-# Submit multiple jobs with different priorities
-./k8s-priority-queue job1.json 100 job2.json 50 job3.json 10
-
-# Submit jobs from YAML files
-./k8s-priority-queue job1.yaml 20 job2.yaml 30
-
-# Combine with other flags
 ./k8s-priority-queue -kubeconfig=./kind-config -max-concurrency=2 job1.json 50
+```
+Can also use test.py for sample testing:
+```bash
+python test.py --jobs 8 --concurrency 3 --monitor 60
 ```
 
 ### Command-line Flags
@@ -77,13 +67,6 @@ You can submit one or more job definition files directly from the command line a
 | `-port` | HTTP server port | `8080` |
 | `-max-concurrency` | Maximum number of concurrent job submissions | `5` |
 
-### Job Arguments Format
-
-After the flags, you can specify job files with their priorities:
-
-```
-./k8s-priority-queue [flags] <job-file-1> <priority-1> [<job-file-2> <priority-2> ...]
-```
 
 ## API Endpoints
 
@@ -146,19 +129,12 @@ curl http://localhost:8080/jobs/running
    ./k8s-priority-queue
    ```
 
-2. Submit multiple jobs with different priorities:
-   ```
-   curl -X POST http://localhost:8080/jobs -H "Content-Type: application/json" -d @high-priority.json
-   curl -X POST http://localhost:8080/jobs -H "Content-Type: application/json" -d @medium-priority.json
-   curl -X POST http://localhost:8080/jobs -H "Content-Type: application/json" -d @low-priority.json
-   ```
-
-3. Check pending jobs to see them ordered by priority:
+2. Check pending jobs to see them ordered by priority:
    ```
    curl http://localhost:8080/jobs/pending
    ```
 
-4. Check running jobs:
+3. Check running jobs:
    ```
    curl http://localhost:8080/jobs/running
    ```
