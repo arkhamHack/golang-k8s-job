@@ -76,3 +76,18 @@ func NewPriorityQueue() *MaxPriorityQueue {
 	heap.Init(pq)
 	return pq
 }
+
+func (pq *MaxPriorityQueue) GetPositionByPriority(priority int) int {
+	pq.mu.RLock()
+	defer pq.mu.RUnlock()
+
+	position := 1
+
+	for _, job := range pq.items {
+		if job.Priority > priority {
+			position++
+		}
+	}
+
+	return position
+}

@@ -1,17 +1,25 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
+	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/avigyan/k8s-priority-queue/pkg/kubernetes"
 	"github.com/avigyan/k8s-priority-queue/pkg/server"
+	"sigs.k8s.io/yaml"
 )
 
 func main() {
@@ -47,6 +55,93 @@ func main() {
 
 	// Create and start the server
 	srv := server.NewServer(kubeClient, port, maxConcurrency)
+	
+	// Process any additional arguments as job definition files with priorities
+	remaining := flag.Args()
+	if len(remaining) > 0 {
+		go func() {
+			// Wait a moment for the server to start
+			time.Sleep(1 * time.Second)
+			
+			// Each pair of arguments should be (jobfile, priority)
+			for i := 0; i < len(remaining); i += 2 {
+				if i+1 >= len(remaining) {
+					log.Printf("Warning: Job file %s provided without priority, skipping", remaining[i])
+					break
+				}
+				
+				jobFile := remaining[i]
+				priority, err := strconv.Atoi(remaining[i+1])
+				if err != nil {
+					log.Printf("Invalid priority for job %s: %v, skipping", jobFile, err)
+					continue
+				}
+				
+				log.Printf("Processing job file %s with priority %d", jobFile, priority)
+				
+				// Read the job file
+				jobData, err := os.ReadFile(jobFile)
+				if err != nil {
+					log.Printf("Failed to read job file %s: %v", jobFile, err)
+					continue
+				}
+				
+				// Parse file extension to handle YAML if needed
+				var jobSpec map[string]interface{}
+				if strings.HasSuffix(strings.ToLower(jobFile), ".yaml") || strings.HasSuffix(strings.ToLower(jobFile), ".yml") {
+					// Convert YAML to JSON
+					var jsonData []byte
+					jsonData, err = yaml.YAMLToJSON(jobData)
+					if err != nil {
+						log.Printf("Failed to convert YAML to JSON for file %s: %v", jobFile, err)
+						continue
+					}
+					jobData = jsonData
+				}
+				
+				// Extract job name from filename if not specified
+				jobName := filepath.Base(jobFile)
+				jobName = strings.TrimSuffix(jobName, filepath.Ext(jobName))
+				
+				// Create job submission request
+				request := struct {
+					Name      string                 `json:"name"`
+					Priority  int                    `json:"priority"`
+					Namespace string                 `json:"namespace"`
+					JobSpec   map[string]interface{} `json:"jobSpec"`
+				}{
+					Name:      jobName,
+					Priority:  priority,
+					Namespace: "default",
+				}
+				
+				// Parse the job definition
+				if err := json.Unmarshal(jobData, &jobSpec); err != nil {
+					log.Printf("Failed to parse job file %s: %v", jobFile, err)
+					continue
+				}
+				request.JobSpec = jobSpec
+				
+				// Submit the job to the API
+				jobJSON, _ := json.Marshal(request)
+				resp, err := http.Post(fmt.Sprintf("http://localhost:%d/jobs", port), "application/json", bytes.NewBuffer(jobJSON))
+				if err != nil {
+					log.Printf("Failed to submit job %s: %v", jobFile, err)
+					continue
+				}
+				defer resp.Body.Close()
+				
+				// Check response
+				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+					log.Printf("Successfully submitted job %s with priority %d", jobName, priority)
+				} else {
+					log.Printf("Failed to submit job %s: HTTP %d", jobName, resp.StatusCode)
+					respBody, _ := io.ReadAll(resp.Body)
+					log.Printf("Response: %s", string(respBody))
+				}
+			}
+		}()
+	}
 
 	// Setup graceful shutdown
 	stopCh := make(chan os.Signal, 1)
